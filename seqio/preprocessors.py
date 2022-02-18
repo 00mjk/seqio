@@ -18,6 +18,7 @@ import functools
 from typing import Dict, Mapping, Optional
 
 from seqio import dataset_providers
+from seqio import feature_converters
 from seqio import utils
 import tensorflow.compat.v2 as tf
 
@@ -298,3 +299,44 @@ def _append_to_innermost_axis(tensor: tf.Tensor,
          tf.constant([[0, 1]])],
         axis=0)
     return tf.pad(tensor, paddings=paddings, constant_values=scalar)
+
+
+def pack_mt_dataset(dataset: tf.data.Dataset,
+                    sequence_length: Dict[str, int]) -> tf.data.Dataset:
+  """Packs examples for sequence to sequence tasks.
+
+  Example:
+    Two input examples get combined to form an output example.
+    The input examples are:
+    {"inputs": [8, 7, 1, 0], "targets":[4, 1, 0], "idx": 0}
+    {"inputs": [2, 3, 4, 1], "targets":[5, 6, 1], "idx": 1}
+    The output example is:
+    {
+      "encoder_input_tokens": [8, 7, 1, 2, 3, 4, 1, 0, 0, 0]
+       "encoder_segment_ids": [1, 1, 1, 2, 2, 2, 2, 0, 0, 0]
+         "encoder_positions": [0, 1, 2, 0, 1, 2, 3, 0, 0, 0]
+     "decoder_target_tokens": [4, 1, 5, 6, 1, 0, 0, 0, 0, 0]
+      "decoder_input_tokens": [0, 4, 1, 5, 6, 1, 0, 0, 0, 0]
+      "decoder_loss_weights": [1, 1, 1, 1, 1, 1, 0, 0, 0, 0]
+       "decoder_segment_ids": [1, 1, 2, 2, 2, 0, 0, 0, 0, 0]
+         "decoder_positions": [0, 1, 0, 1, 2, 0, 0, 0, 0, 0]
+    }
+
+    0 represents padding in both the inputs and the outputs.
+
+    Sequences in the incoming examples are truncated to length in
+    `feature_lengths`, and the sequences in the output examples all have this
+    fixed (padded) length. Features not in `features_length` (i.e, "idx") are
+    removed.
+
+  Args:
+    dataset: a tf.data.Dataset of tokenized examples to pack.
+    sequence_length: a mapping from output feature names to max lengths.
+
+  Returns:
+    a tf.data.Dataset of packed examples.
+  """
+  packer = feature_converters.EncDecFeatureConverter(
+      pack=True, use_custom_packing_ops=False)
+  # pylint: disable=protected-access
+  return packer._convert_features(dataset, sequence_length)
